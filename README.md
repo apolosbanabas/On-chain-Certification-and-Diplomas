@@ -43,5 +43,4 @@ Each certificate contains:
 ## 💻 Development
 
 Built with Clarity and Clarinet for the Stacks blockchain ecosystem.
-```
-
+``
