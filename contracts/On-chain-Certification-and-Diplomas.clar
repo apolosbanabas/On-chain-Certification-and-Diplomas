@@ -4,6 +4,8 @@
 (define-constant err-not-authorized (err u100))
 (define-constant err-already-exists (err u101))
 (define-constant err-invalid-certificate (err u102))
+(define-constant err-certificate-expired (err u103))
+(define-constant err-not-renewable (err u104))
 
 (define-data-var certificate-counter uint u0)
 (define-data-var institution-admin principal tx-sender)
@@ -17,6 +19,8 @@
         issue-date: uint,
         certificate-hash: (string-ascii 64),
         verified: bool,
+        expiration-date: (optional uint),
+        renewable: bool,
     }
 )
 
@@ -38,6 +42,16 @@
 
 (define-read-only (get-certificate-count)
     (var-get certificate-counter)
+)
+
+(define-read-only (is-certificate-valid (certificate-id uint))
+    (match (get-certificate-by-id certificate-id)
+        certificate-data (match (get expiration-date certificate-data)
+            expiry-block (<= stacks-block-height expiry-block)
+            true
+        )
+        false
+    )
 )
 
 (define-public (register-institution (institution-name (string-ascii 64)))
@@ -64,10 +78,16 @@
         (institution (string-ascii 64))
         (course (string-ascii 64))
         (certificate-hash (string-ascii 64))
+        (expiration-blocks (optional uint))
+        (renewable bool)
     )
     (let (
             (certificate-id (+ (var-get certificate-counter) u1))
             (institution-data (unwrap! (get-institution tx-sender) err-not-authorized))
+            (expiry-date (match expiration-blocks
+                blocks (some (+ stacks-block-height blocks))
+                none
+            ))
         )
         (asserts! (get verified institution-data) err-not-authorized)
         (try! (nft-mint? certificate certificate-id recipient))
@@ -78,6 +98,8 @@
             issue-date: stacks-block-height,
             certificate-hash: certificate-hash,
             verified: true,
+            expiration-date: expiry-date,
+            renewable: renewable,
         })
         (var-set certificate-counter certificate-id)
         (ok certificate-id)
@@ -90,6 +112,32 @@
     )
     (let ((current-owner tx-sender))
         (try! (nft-transfer? certificate certificate-id current-owner recipient))
+        (ok true)
+    )
+)
+
+(define-public (renew-certificate
+        (certificate-id uint)
+        (new-expiration-blocks (optional uint))
+    )
+    (let (
+            (certificate-data (unwrap! (get-certificate-by-id certificate-id)
+                err-invalid-certificate
+            ))
+            (institution-data (unwrap! (get-institution tx-sender) err-not-authorized))
+            (new-expiry-date (match new-expiration-blocks
+                blocks (some (+ stacks-block-height blocks))
+                none
+            ))
+        )
+        (asserts! (get verified institution-data) err-not-authorized)
+        (asserts! (get renewable certificate-data) err-not-renewable)
+        (map-set certificates certificate-id
+            (merge certificate-data {
+                expiration-date: new-expiry-date,
+                issue-date: stacks-block-height,
+            })
+        )
         (ok true)
     )
 )
