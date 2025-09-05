@@ -29,6 +29,8 @@
     {
         name: (string-ascii 64),
         verified: bool,
+        reputation-score: uint,
+        certificates-issued: uint,
     }
 )
 
@@ -60,6 +62,8 @@
         (map-set institutions tx-sender {
             name: institution-name,
             verified: true,
+            reputation-score: u100,
+            certificates-issued: u0,
         })
         (ok true)
     )
@@ -101,6 +105,9 @@
             expiration-date: expiry-date,
             renewable: renewable,
         })
+        (map-set institutions tx-sender
+            (merge institution-data { certificates-issued: (+ (get certificates-issued institution-data) u1) })
+        )
         (var-set certificate-counter certificate-id)
         (ok certificate-id)
     )
@@ -146,6 +153,60 @@
     (let ((current-owner tx-sender))
         (asserts! (is-eq tx-sender contract-owner) err-not-authorized)
         (try! (nft-burn? certificate certificate-id current-owner))
+        (ok true)
+    )
+)
+
+(define-read-only (get-certificate-score (certificate-id uint))
+    (match (get-certificate-by-id certificate-id)
+        certificate-data (let (
+                (institution-principal (get recipient certificate-data))
+                (institution-data (default-to {
+                    name: "",
+                    verified: false,
+                    reputation-score: u0,
+                    certificates-issued: u0,
+                }
+                    (get-institution institution-principal)
+                ))
+                (age-score (if (< (- stacks-block-height (get issue-date certificate-data))
+                        u1000
+                    )
+                    u90
+                    u70
+                ))
+                (validity-score (if (is-certificate-valid certificate-id)
+                    u100
+                    u30
+                ))
+                (institution-score (get reputation-score institution-data))
+            )
+            (some (+ (/ (* age-score u30) u100)
+                (+ (/ (* validity-score u40) u100)
+                    (/ (* institution-score u30) u100)
+                )))
+        )
+        none
+    )
+)
+
+(define-read-only (get-institution-score (institution-principal principal))
+    (match (get-institution institution-principal)
+        institution-data (some (get reputation-score institution-data))
+        none
+    )
+)
+
+(define-public (update-institution-reputation
+        (institution-principal principal)
+        (new-score uint)
+    )
+    (let ((institution-data (unwrap! (get-institution institution-principal) err-invalid-certificate)))
+        (asserts! (is-eq tx-sender contract-owner) err-not-authorized)
+        (asserts! (<= new-score u100) err-invalid-certificate)
+        (map-set institutions institution-principal
+            (merge institution-data { reputation-score: new-score })
+        )
         (ok true)
     )
 )
