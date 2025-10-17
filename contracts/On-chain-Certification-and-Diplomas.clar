@@ -6,6 +6,7 @@
 (define-constant err-invalid-certificate (err u102))
 (define-constant err-certificate-expired (err u103))
 (define-constant err-not-renewable (err u104))
+(define-constant err-batch-limit-exceeded (err u105))
 
 (define-data-var certificate-counter uint u0)
 (define-data-var institution-admin principal tx-sender)
@@ -208,5 +209,94 @@
             (merge institution-data { reputation-score: new-score })
         )
         (ok true)
+    )
+)
+
+(define-private (issue-single-batch-certificate
+        (recipient principal)
+        (context {
+            institution: (string-ascii 64),
+            course: (string-ascii 64),
+            expiration-blocks: (optional uint),
+            renewable: bool,
+            institution-data: {
+                name: (string-ascii 64),
+                verified: bool,
+                reputation-score: uint,
+                certificates-issued: uint,
+            },
+            current-counter: uint,
+            issued-count: uint,
+        })
+    )
+    (let (
+            (certificate-id (+ (get current-counter context) u1))
+            (expiry-date (match (get expiration-blocks context)
+                blocks (some (+ stacks-block-height blocks))
+                none
+            ))
+        )
+        (match (nft-mint? certificate certificate-id recipient)
+            success (begin
+                (map-set certificates certificate-id {
+                    recipient: recipient,
+                    institution: (get institution context),
+                    course: (get course context),
+                    issue-date: stacks-block-height,
+                    certificate-hash: "batch",
+                    verified: true,
+                    expiration-date: expiry-date,
+                    renewable: (get renewable context),
+                })
+                {
+                    institution: (get institution context),
+                    course: (get course context),
+                    expiration-blocks: (get expiration-blocks context),
+                    renewable: (get renewable context),
+                    institution-data: (get institution-data context),
+                    current-counter: certificate-id,
+                    issued-count: (+ (get issued-count context) u1),
+                }
+            )
+            error
+            context
+        )
+    )
+)
+
+(define-public (batch-issue-certificates
+        (recipients (list 25 principal))
+        (institution (string-ascii 64))
+        (course (string-ascii 64))
+        (expiration-blocks (optional uint))
+        (renewable bool)
+    )
+    (let (
+            (institution-data (unwrap! (get-institution tx-sender) err-not-authorized))
+            (initial-counter (var-get certificate-counter))
+            (initial-context {
+                institution: institution,
+                course: course,
+                expiration-blocks: expiration-blocks,
+                renewable: renewable,
+                institution-data: institution-data,
+                current-counter: initial-counter,
+                issued-count: u0,
+            })
+        )
+        (asserts! (get verified institution-data) err-not-authorized)
+        (asserts! (<= (len recipients) u25) err-batch-limit-exceeded)
+        (let ((final-context (fold issue-single-batch-certificate recipients initial-context)))
+            (var-set certificate-counter (get current-counter final-context))
+            (map-set institutions tx-sender
+                (merge institution-data { certificates-issued: (+ (get certificates-issued institution-data)
+                    (get issued-count final-context)
+                ) }
+                ))
+            (ok {
+                total-issued: (get issued-count final-context),
+                final-certificate-id: (get current-counter final-context),
+            })
+        )
     )
 )
