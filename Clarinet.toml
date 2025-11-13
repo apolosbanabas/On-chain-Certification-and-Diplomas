@@ -9,6 +9,10 @@ requirements = []
 path = 'contracts/On-chain-Certification-and-Diplomas.clar'
 clarity_version = 3
 epoch = 3.1
+[contracts.cert-hash-index]
+path = 'contracts/cert-hash-index.clar'
+clarity_version = 3
+epoch = 3.1
 [repl.analysis]
 passes = ['check_checker']
 
